@@ -1,2 +1,16 @@
-PySide6>=6.5
-pyobjc>=9.2
+```
+# requirements.txt
+# Core dependency:
+# None explicit, relies on Python built-ins and macOS tools.
+
+# Optional GUI backends:
+# Pick one or both
+# PySide6
+# PyQt5
+
+# Optional macOS-specific for enhanced features (dark mode, icons)
+# pyobjc
+pytest
+pytest-asyncio
+flake8
+```
