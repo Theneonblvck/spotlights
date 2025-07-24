@@ -1,9 +1,9 @@
-```python
 # spotlight_gui/ui/tk_app.py
 import tkinter as tk
 from tkinter import ttk, font, scrolledtext, messagebox
 import asyncio
 import os
+from typing import Dict, Any
 import sys
 import datetime
 import json
@@ -74,6 +74,9 @@ class TkinterApp(tk.Tk):
             except (ValueError, tk.TclError):
                 pass # Fallback to default if invalid
 
+    def run(self):
+        self.mainloop()
+
     def _get_config_path(self) -> str:
         """Determines the path for application configuration file."""
         if is_macos():
@@ -111,8 +114,16 @@ class TkinterApp(tk.Tk):
         if is_macos():
             theme_path = os.path.join(os.path.dirname(__file__), "tk_assets", "sun-valley.tcl")
             if os.path.exists(theme_path):
+            try:
+                if "set_light_theme_colors" not in self.tk.call("info", "commands").split():
+                    self.tk.createcommand("set_light_theme_colors", lambda *args: None)
                 self.tk.call("source", theme_path)
-                self.tk.call("set_theme", "light")
+                    try:
+                        self.tk.call("set_theme", "light")
+                    except Exception as e:
+                        print(f"Warning: set_theme command failed: {e}")
+                except Exception as e:
+                    print(f"Error loading theme: {e}")
                 
                 if NSUserDefaults:
                     try:
@@ -903,7 +914,10 @@ class TkinterApp(tk.Tk):
         self._show_status("Shutting down application...")
         
         if self._after_id:
-            self.after_cancel(self._after_id)
+            try:
+                self.after_cancel(self._after_id)
+            except Exception:
+                pass
             self._after_id = None
 
         for task in self.active_streaming_tasks:
@@ -941,4 +955,3 @@ if __name__ == '__main__':
             loop.run_until_complete(asyncio.gather(*pending_tasks, return_exceptions=True))
         
         print("Tkinter app and associated asyncio tasks shut down.")
-```

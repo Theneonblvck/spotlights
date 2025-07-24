@@ -1,4 +1,3 @@
-```python
 # spotlight_gui/core/api_objc.py
 import sys
 import os # Added for os.path.exists
@@ -115,4 +114,3 @@ if __name__ == '__main__':
         print("To enable, ensure you are on macOS and 'pip install pyobjc' is run.")
 
     print("\nAll api_objc.py tests completed.")
-```

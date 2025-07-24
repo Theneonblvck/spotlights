@@ -1,4 +1,3 @@
-```python
 # spotlight_gui/core/commands.py
 import asyncio
 import json
@@ -456,4 +455,3 @@ if __name__ == '__main__':
 
     # Run the main async test function
     asyncio.run(main_commands_tests())
-```

@@ -1,4 +1,3 @@
-```python
 # spotlight_gui/ui/qt_app.py
 import sys
 import os
@@ -57,6 +56,7 @@ class AsyncWorker(QThread):
     def __init__(self, loop: asyncio.AbstractEventLoop):
         super().__init__()
         self.loop = loop
+        self.finished.connect(self.loop.close)
         self.started.connect(self._run_loop)
 
     def _run_loop(self):
@@ -64,11 +64,9 @@ class AsyncWorker(QThread):
         self.loop.run_forever()
 
     def stop(self):
-        """Stops the asyncio event loop."""
-        if self.loop.is_running():
+        if self.loop and not self.loop.is_closed():
             self.loop.call_soon_threadsafe(self.loop.stop)
-            self.quit()
-            self.wait() # Wait for the thread to finish
+        self.quit()    # do NOT call wait() to avoid deadlock
 
 class SpotlightQtApp(QMainWindow):
     """
@@ -79,8 +77,10 @@ class SpotlightQtApp(QMainWindow):
     # Signals for updating UI from asyncio thread
     ui_update_signal = Signal(dict)
     add_tree_item_signal = Signal(QTreeWidgetItem) # New signal for adding tree items
+    _cleanup_finished_signal = Signal()
 
-    def __init__(self, loop: asyncio.AbstractEventLoop):
+def __init__(self, loop: asyncio.AbstractEventLoop):
+        self._cleanup_finished_signal.connect(self._do_final_close)
         super().__init__()
         self.loop = loop
         self.async_worker_thread = AsyncWorker(self.loop)
@@ -94,15 +94,20 @@ class SpotlightQtApp(QMainWindow):
 
         # Qt settings for persisting UI state
         self.settings = QSettings("com.yourcompany", "SpotlightGUI") # macOS domain.bundle.app style
-
-        self._setup_ui()
-        self._setup_asyncio_bridge()
-
+        
         # Debounce timer for live search input
         self._search_debounce_timer = QTimer(self)
         self._search_debounce_timer.setSingleShot(True)
         self._search_debounce_timer.setInterval(500) # 500 ms debounce
         self._search_debounce_timer.timeout.connect(self._perform_live_search_debounced)
+        
+        self._setup_ui()
+        self._setup_asyncio_bridge()
+
+    def _perform_live_search_debounced(self):
+        # Placeholder for live search debouncing in the Qt app.
+        # Implement live search logic here if needed, or simply log an informational message.
+        print("Live search debounced triggered (Qt app)")
 
         self.live_search_task = None # Holds the active asyncio task for live mdfind
         self.log_streaming_task = None # Holds the active asyncio task for streaming logs
@@ -183,6 +188,9 @@ class SpotlightQtApp(QMainWindow):
         else:
             print("Not on macOS. Using default Qt theme.")
 
+
+    def _do_final_close(self):
+        self.close()
 
     def _setup_asyncio_bridge(self):
         """Sets up the bridge for communicating between asyncio and Qt threads."""
@@ -1154,4 +1162,3 @@ if __name__ == '__main__':
     main_window.show()
     
     sys.exit(app.exec())
-```
