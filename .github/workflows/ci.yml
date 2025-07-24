@@ -1,0 +1,13 @@
+name: CI
+on: [push, pull_request]
+jobs:
+  lint-test:
+    runs-on: macos-latest
+    steps:
+      - uses: actions/checkout@v3
+      - uses: actions/setup-python@v4
+        with:
+          python-version: "3.11"
+      - run: pip install ruff pytest -r requirements.txt
+      - run: ruff .
+      - run: pytest
