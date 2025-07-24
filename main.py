@@ -66,6 +66,14 @@ def run_gui():
             from spotlight_gui.ui.tk_app import TkinterApp
             app_instance = TkinterApp(loop) # Pass the asyncio loop to the Tkinter app
             gui_app = app_instance # Store reference to Tkinter Tk() for mainloop()
+
+            # Ensure '_search_debounce_task' is initialized to avoid attribute errors
+            if not hasattr(gui_app, '_search_debounce_task'):
+                gui_app._search_debounce_task = None
+
+        except AttributeError as attr_err:
+            print(f"ERROR: Attribute error in Tkinter GUI: {attr_err}", file=sys.stderr)
+            gui_app = None
         except Exception as e:
             print(f"ERROR: Failed to launch Tkinter GUI: {e}", file=sys.stderr)
             gui_app = None

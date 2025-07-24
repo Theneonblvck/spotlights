@@ -114,17 +114,19 @@ class TkinterApp(tk.Tk):
         if is_macos():
             theme_path = os.path.join(os.path.dirname(__file__), "tk_assets", "sun-valley.tcl")
             if os.path.exists(theme_path):
-            try:
-                if "set_light_theme_colors" not in self.tk.call("info", "commands").split():
-                    self.tk.createcommand("set_light_theme_colors", lambda *args: None)
-                self.tk.call("source", theme_path)
+                try:
+                    # Load custom Sun Valley theme
+                    if "set_light_theme_colors" not in self.tk.call("info", "commands").split():
+                        self.tk.createcommand("set_light_theme_colors", lambda *args: None)
+                    self.tk.call("source", theme_path)
                     try:
                         self.tk.call("set_theme", "light")
                     except Exception as e:
                         print(f"Warning: set_theme command failed: {e}")
                 except Exception as e:
                     print(f"Error loading theme: {e}")
-                
+
+                # Detect macOS dark mode if PyObjC is available
                 if NSUserDefaults:
                     try:
                         user_defaults = NSUserDefaults.standardUserDefaults()

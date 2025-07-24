@@ -1,0 +1,30 @@
+{
+    // Use IntelliSense to learn about possible attributes.
+    // Hover to view descriptions of existing attributes.
+    // For more information, visit: https://go.microsoft.com/fwlink/?linkid=830387
+    "version": "0.2.0",
+    "configurations": [
+        {
+            "name": "Python: Run main.py (Qt/Tkinter Auto)",
+            "type": "python",
+            "request": "launch",
+            "program": "${workspaceFolder}/main.py",
+            "console": "integratedTerminal",
+            "cwd": "${workspaceFolder}", // Important: Sets the current working directory to the project root
+            "justMyCode": true,
+            "purpose": ["debug-test"] // Optional: can be used by VS Code test explorer
+        },
+        {
+            "name": "Python: Run as Module (spotlight_gui)",
+            "type": "python",
+            "request": "launch",
+            "module": "spotlight_gui",
+            "console": "integratedTerminal",
+            "cwd": "${workspaceFolder}", // Crucial: Sets the current working directory to the project root
+                                        // This ensures that the `sys.path.insert(0, ...)` in __main__.py
+                                        // correctly finds 'main.py' one level up.
+            "justMyCode": true,
+            "purpose": ["debug-test"]
+        }
+    ]
+}
