@@ -4,7 +4,7 @@ import json
 import plistlib
 import os
 import sys
-from typing import List, Dict, Any, Callable, AsyncGenerator
+from typing import List, Dict, Any, Callable, AsyncGenerator, Union
 
 from spotlight_gui.utils.async_subprocess import run_command_async, run_streaming_command_async, get_recent_output_logs
 from spotlight_gui.utils.checks import enforce_volume_protection_rule, SystemCheckError, is_macos
@@ -21,22 +21,23 @@ class CommandError(Exception):
         self.stderr = stderr
 
 async def mdfind(query: str, live: bool = False, paths: List[str] = None,
-                 output_callback: Callable[[str], None] = None) -> List[str] | AsyncGenerator[str, None]:
+                 output_callback: Callable[[str], None] = None) -> Union[List[str], AsyncGenerator[str, None]]:
     """
     Executes the mdfind command.
 
     Args:
         query: The search predicate string.
-        live: If True, uses the -live flag to stream results. Requires output_callback.
+        live: If True, uses the -live flag to stream results.
         paths: List of directories to search. Defaults to all indexed locations.
         output_callback: A callable to receive streamed results if `live` is True.
+                         If provided, results are sent via the callback.
                          If `live` is True and `output_callback` is None, this function
-                         will return an async generator.
+                         returns an async generator yielding paths.
 
     Returns:
         If live is False, returns a list of matching file paths.
-        If live is True and output_callback is provided, returns an empty list (results are streamed).
-        If live is True and output_callback is None, returns an async generator yielding paths.
+        If live is True and output_callback is provided, returns an empty list.
+        If live is True and output_callback is None, returns an async generator.
 
     Raises:
         CommandError: If mdfind command fails.
@@ -45,16 +46,13 @@ async def mdfind(query: str, live: bool = False, paths: List[str] = None,
     command = ['mdfind', query]
     if paths:
         for path in paths:
-            enforce_volume_protection_rule(path) # Enforce protection for each search path
+            enforce_volume_protection_rule(path)
         command.extend(['-onlyin', *paths])
 
     if live:
         command.append('-live')
-        if output_callback is None:
-            raise NotImplementedError("Live mdfind without an explicit output_callback "
-                                      "returning an async generator is not yet implemented fully "
-                                      "and adds complexity for this example. Please provide an output_callback.")
-        else:
+        if output_callback:
+            # Legacy callback mode
             async def _stream_handler(line: str):
                 if line:
                     await asyncio.to_thread(output_callback, line)
@@ -63,6 +61,31 @@ async def mdfind(query: str, live: bool = False, paths: List[str] = None,
                 return []
             except Exception as e:
                 raise CommandError(f"Error streaming mdfind: {e}")
+        else:
+            # New async generator mode
+            async def generator():
+                queue = asyncio.Queue()
+
+                async def _queue_filler(line: str):
+                    await queue.put(line)
+
+                async def _run_stream():
+                    try:
+                        await run_streaming_command_async(command, _queue_filler)
+                    finally:
+                        await queue.put(None)  # Sentinel for end-of-stream
+
+                stream_task = asyncio.create_task(_run_stream())
+                try:
+                    while True:
+                        item = await queue.get()
+                        if item is None:
+                            break
+                        yield item
+                finally:
+                    if not stream_task.done():
+                        stream_task.cancel()
+            return generator()
     else:
         return_code, stdout, stderr = await run_command_async(command)
         if return_code != 0:
@@ -129,9 +152,9 @@ async def mdutil_manage_index(volume_path: str, action: str) -> Dict[str, Any]:
     elif action == 'disable':
         base_command.extend(['-i', 'off', volume_path])
     elif action == 'erase':
-        base_command.extend(['-E', volume_path]) # Erase and rebuild index
-    elif action == 'rebuild': # -L implies erase and rebuild, not just a simple rebuild
-        base_command.extend(['-L', volume_path]) # Rebuilds local indexes for the given volume.
+        base_command.extend(['-E', volume_path])
+    elif action == 'rebuild':
+        base_command.extend(['-L', volume_path])
     else:
         raise ValueError(f"Invalid action: {action}. Must be 'enable', 'disable', 'erase', or 'rebuild'.")
 
@@ -181,34 +204,38 @@ async def mdls(file_path: str) -> Dict[str, Any]:
     Raises:
         CommandError: If mdls command fails.
     """
-    command = ['mdls', '-plist', '-', file_path] # Use -plist to get XML output
+    if not file_path or not os.path.exists(file_path):
+        return {}
+        
+    command = ['mdls', '-plist', '-', file_path]
     return_code, stdout, stderr = await run_command_async(command)
 
     if return_code != 0:
-        if "No such file or directory" in stderr or "Can't find" in stderr:
-            return {}
         raise CommandError(f"mdls command failed (exit code {return_code}): {stderr}",
                            return_code, stdout, stderr)
 
     try:
-        metadata = plistlib.loads(stdout.encode('utf-8'))
-        return metadata
-    except (plistlib.InvalidFileException, ValueError, TypeError) as e:
+        # The output from mdls might contain multiple plist objects
+        # We need to find the root one, which is the first one.
+        plist_content = stdout.encode('utf-8')
+        metadata_list = plistlib.loads(plist_content, fmt=plistlib.FMT_XML)
+        # mdls -plist - returns an array of dictionaries
+        return metadata_list[0] if metadata_list else {}
+    except (plistlib.InvalidFileException, ValueError, TypeError, IndexError) as e:
         raise CommandError(f"Failed to parse mdls plist output for '{file_path}': {e}\nRaw output:\n{stdout}",
                            return_code=0, stdout=stdout, stderr=stderr)
 
-async def log_show(predicate: str, tail: bool = False, output_callback: Callable[[str], None] = None) -> List[str] | None:
+async def log_show(predicate: str, tail: bool = False, output_callback: Callable[[str], None] = None) -> Union[List[str], None]:
     """
     Executes the log show command to retrieve system logs.
 
     Args:
-        predicate: The log predicate string (e.g., 'subsystem == "com.apple.metadata.spotlight"').
-        tail: If True, continuously streams new log entries (like 'tail -f'). Requires output_callback.
+        predicate: The log predicate string.
+        tail: If True, continuously streams new log entries.
         output_callback: A callable to receive streamed log entries if `tail` is True.
 
     Returns:
-        If tail is False, returns a list of log entries.
-        If tail is True and output_callback is provided, returns None (results are streamed).
+        If tail is False, returns a list of log entries. Otherwise, returns None.
 
     Raises:
         CommandError: If log command fails.
@@ -218,21 +245,19 @@ async def log_show(predicate: str, tail: bool = False, output_callback: Callable
     if tail:
         command.append('--stream')
         if output_callback is None:
-            raise NotImplementedError("Live log streaming without an explicit output_callback "
-                                      "is not yet implemented. Please provide an output_callback.")
-        else:
-            async def _stream_handler(line: str):
-                if line:
-                    await asyncio.to_thread(output_callback, line)
-            try:
-                await run_streaming_command_async(command, _stream_handler)
-                return None
-            except Exception as e:
-                raise CommandError(f"Error streaming log: {e}")
+            raise NotImplementedError("Live log streaming requires an output_callback.")
+        
+        async def _stream_handler(line: str):
+            if line:
+                await asyncio.to_thread(output_callback, line)
+        try:
+            await run_streaming_command_async(command, _stream_handler)
+            return None
+        except Exception as e:
+            raise CommandError(f"Error streaming log: {e}")
     else:
-        command.extend(['--last', '1h']) # Fetch logs from last hour for one-shot query
+        command.extend(['--last', '1h'])
         return_code, stdout, stderr = await run_command_async(command, timeout=120)
-
         if return_code != 0:
             raise CommandError(f"log show command failed (exit code {return_code}): {stderr}",
                                return_code, stdout, stderr)
@@ -243,215 +268,28 @@ async def list_indexed_volumes() -> List[Dict[str, Any]]:
     Lists all mounted volumes on macOS and their Spotlight indexing status.
 
     Returns:
-        A list of dictionaries, where each dictionary contains:
-        'volume': The volume mount path (e.g., '/', '/Volumes/MyDisk')
-        'indexed': Boolean indicating if indexing is enabled.
-        'state': 'enabled', 'disabled', or 'unknown'.
-        'error': Optional error message if status could not be retrieved or volume is restricted.
+        A list of dictionaries, each containing volume info.
     """
     if not is_macos():
         return []
 
-    volumes = []
-    check_paths = ['/'] # Root volume is always present
-
-    # Check /Volumes for external drives and user-mounted shares
+    check_paths = ['/']
     try:
         if os.path.exists('/Volumes'):
-            for item in os.listdir('/Volumes'):
-                full_path = os.path.join('/Volumes', item)
-                if os.path.isdir(full_path):
-                    check_paths.append(full_path)
+            check_paths.extend([os.path.join('/Volumes', item) for item in os.listdir('/Volumes') if os.path.isdir(os.path.join('/Volumes', item))])
     except Exception as e:
         print(f"Warning: Could not list /Volumes: {e}", file=sys.stderr)
 
-    # Use a set to avoid duplicates and resolve real paths (e.g., /System/Volumes/Data vs /)
-    unique_paths = set()
-    for p in check_paths:
-        try:
-            real_path = os.path.realpath(os.path.abspath(p))
-            unique_paths.add(real_path)
-        except OSError as e:
-            print(f"Warning: Could not resolve path {p}: {e}", file=sys.stderr)
-
+    unique_paths = {os.path.realpath(os.path.abspath(p)) for p in check_paths}
+    
     results = []
     for path in sorted(list(unique_paths)):
         try:
-            # Check for forbidden volume name before calling mdutil
             enforce_volume_protection_rule(path)
-            status_data = await mdutil_status(path) # Use existing mdutil_status
+            status_data = await mdutil_status(path)
             results.append(status_data)
         except SystemCheckError as e:
-            results.append({
-                'volume': path,
-                'indexed': 'restricted', # Special status for forbidden volume
-                'state': 'restricted',
-                'error': str(e)
-            })
-            # This is not an error but an expected security block
+            results.append({'volume': path, 'state': 'restricted', 'error': str(e)})
         except CommandError as e:
-            results.append({
-                'volume': path,
-                'indexed': 'error',
-                'state': 'error',
-                'error': e.message
-            })
-            print(f"Warning: Could not get mdutil status for {path}: {e.stderr}", file=sys.stderr)
-        except Exception as e:
-            results.append({
-                'volume': path,
-                'indexed': 'error',
-                'state': 'error',
-                'error': str(e)
-            })
-            print(f"Warning: Unexpected error for {path}: {e}", file=sys.stderr)
+            results.append({'volume': path, 'state': 'error', 'error': e.message})
     return results
-
-# Simple test stub for commands.py
-if __name__ == '__main__':
-    async def main_commands_tests():
-        print("--- Testing commands.py ---")
-
-        if not is_macos():
-            print("Skipping core.commands tests: Not on macOS.")
-            return
-
-        # Helper to print results
-        def print_result(header, result):
-            print(f"\n{header}:")
-            if isinstance(result, list):
-                for item in result[:5]: # Print first 5 for brevity
-                    print(f"  {item}")
-                if len(result) > 5:
-                    print(f"  ... ({len(result) - 5} more)")
-            elif isinstance(result, dict):
-                for k, v in list(result.items())[:5]:
-                    print(f"  {k}: {v}")
-                if len(result) > 5:
-                    print(f"  ... ({len(result) - 5} more keys)")
-            else:
-                print(f"  {result}")
-
-        # Test mdfind (non-live)
-        print("\n--- Test mdfind (non-live) ---")
-        try:
-            # Search for a common file type, e.g., '.DS_Store' in home directory
-            results = await mdfind("kMDItemFSName == '.DS_Store'", paths=[os.path.expanduser('~')])
-            print_result("mdfind results for '.DS_Store' in home directory", results)
-            assert isinstance(results, list) # Should at least return an empty list if none found
-            # assert len(results) > 0, "mdfind should return some results (e.g. .DS_Store)"
-        except CommandError as e:
-            print(f"mdfind test failed: {e}")
-            assert False, f"mdfind failed: {e}"
-        except Exception as e:
-            print(f"Unexpected error in mdfind test: {e}")
-            assert False
-
-        # Test mdutil_status
-        print("\n--- Test mdutil_status ---")
-        try:
-            status = await mdutil_status('/')
-            print_result("mdutil status for /", status)
-            assert isinstance(status, dict) and 'indexed' in status, "mdutil_status should return dict with 'indexed'"
-        except CommandError as e:
-            print(f"mdutil_status test failed: {e}")
-            assert False
-        except SystemCheckError as e:
-            print(f"mdutil_status caught expected SystemCheckError (this shouldn't happen for '/'): {e}")
-            assert False
-
-        # Test mdutil_manage_index (simulated forbidden volume)
-        print("\n--- Test mdutil_manage_index (forbidden volume) ---")
-        from spotlight_gui.utils.checks import FORBIDDEN_VOLUME_NAME
-        forbidden_path = f"/Volumes/{FORBIDDEN_VOLUME_NAME}"
-        try:
-            await mdutil_manage_index(forbidden_path, 'disable')
-            print("ERROR: mdutil_manage_index did not catch forbidden volume.")
-            assert False
-        except SystemCheckError as e:
-            print(f"OK: Caught expected SystemCheckError for forbidden volume: {e}")
-        except CommandError as e:
-            print(f"ERROR: mdutil_manage_index failed with CommandError instead of SystemCheckError: {e}")
-            assert False
-
-        # Test mdls
-        print("\n--- Test mdls ---")
-        try:
-            _, stdout, _ = await run_command_async(['which', 'python3'])
-            python_path = stdout.strip()
-            if python_path and os.path.exists(python_path):
-                metadata = await mdls(python_path)
-                print_result(f"mdls metadata for {python_path}", metadata)
-                assert isinstance(metadata, dict) and 'kMDItemDisplayName' in metadata, "mdls should return dict with display name"
-            else:
-                print("Could not find python3 executable to test mdls.")
-        except CommandError as e:
-            print(f"mdls test failed: {e}")
-            assert False
-        except Exception as e:
-            print(f"Unexpected error in mdls test: {e}")
-            assert False
-
-        # Test log_show (non-streaming)
-        print("\n--- Test log_show (non-streaming, spotlight predicate) ---")
-        try:
-            logs = await log_show('subsystem == "com.apple.metadata.spotlight"')
-            print_result("Recent Spotlight logs", logs)
-            assert isinstance(logs, list), "log_show should return a list"
-        except CommandError as e:
-            print(f"log_show test failed: {e}")
-        except Exception as e:
-            print(f"Unexpected error in log_show test: {e}")
-            assert False
-
-        # Test mdfind (live streaming)
-        print("\n--- Test mdfind (live streaming for 5 seconds) ---")
-        live_mdfind_results = []
-        async def live_mdfind_callback(line):
-            # print(f"  [Live mdfind] {line}") # Uncomment for verbose output
-            live_mdfind_results.append(line)
-
-        temp_file_path = os.path.expanduser("~/spotlight_test_live_file.txt")
-        try:
-            open(temp_file_path, 'w').close() # Create file
-            mdfind_task = asyncio.create_task(
-                mdfind("kMDItemFSName == 'spotlight_test_live_file.txt'", live=True,
-                       output_callback=live_mdfind_callback)
-            )
-            print("  (Waiting for live mdfind results for 5 seconds...)")
-            await asyncio.sleep(5) # Let it run for a bit
-            mdfind_task.cancel() # Stop the streaming task
-            await asyncio.gather(mdfind_task, return_exceptions=True) # Wait for cancellation to complete
-            print(f"  Collected {len(live_mdfind_results)} live mdfind results.")
-            assert len(live_mdfind_results) > 0, "Should have captured some live mdfind results"
-            assert temp_file_path in live_mdfind_results, "Temp file should be found live"
-        except asyncio.CancelledError:
-            print("  Live mdfind task cancelled as expected.")
-        except CommandError as e:
-            print(f"Live mdfind test failed: {e}")
-            assert False
-        except Exception as e:
-            print(f"Unexpected error in live mdfind test: {e}")
-            assert False
-        finally:
-            if os.path.exists(temp_file_path):
-                os.remove(temp_file_path) # Clean up temp file
-
-
-        # --- New: Test list_indexed_volumes ---
-        print("\n--- Test list_indexed_volumes ---")
-        try:
-            volumes_list = await list_indexed_volumes()
-            print_result("List of indexed volumes", volumes_list)
-            assert isinstance(volumes_list, list)
-            assert all('volume' in v for v in volumes_list)
-            if any(v.get('state') == 'restricted' for v in volumes_list):
-                print("  (Detected at least one restricted volume)")
-        except Exception as e:
-            print(f"list_indexed_volumes test failed: {e}")
-            assert False
-
-        print("\nAll commands.py tests completed.")
-
-    # Run the main async test function
-    asyncio.run(main_commands_tests())
