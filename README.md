@@ -76,3 +76,63 @@ Navigate to the `spotlight_app/` directory in your terminal.
 The application will attempt to launch the Qt GUI if `PySide6` or `PyQt5` is installed. Otherwise, it will fall back to the Tkinter GUI.
 
 ## Project Structure
+
+spotlight_app/
+├── main.py # Main entry point; chooses GUI backend
+├── .gitignore # Standard Git ignore file
+├── requirements.txt # Python dependencies
+├── README.md # This documentation
+├── spotlight_gui/
+│ ├── init.py # Makes 'spotlight_gui' a Python package
+│ ├── main.py # Allows python -m spotlight_gui launch
+│ ├── core/
+│ │ ├── init.py
+│ │ ├── commands.py # Wrappers for mdfind, mdutil, mdls, log
+│ │ └── api_objc.py # Optional PyObjC helpers (e.g., for icons)
+│ ├── ui/
+│ │ ├── init.py
+│ │ ├── tk_app.py # Tkinter GUI implementation
+│ │ ├── qt_app.py # Qt GUI implementation
+│ │ └── tk_assets/ # Tkinter theme files (e.g., sun-valley.tcl)
+│ │ └── sun-valley.tcl # Manually downloaded Tkinter theme
+│ └── utils/
+│ ├── init.py
+│ ├── async_subprocess.py # Non-blocking subprocess wrapper with streaming
+│ └── checks.py # System checks (OS, PyObjC, Qt) and safety rules
+└── .github/ # GitHub specific configuration
+└── workflows/
+└── ci.yml # GitHub Actions CI workflow
+
+
+## Safety Guard: "B1 8TBPii" Volume
+
+A critical safety rule is implemented to prevent any indexing or modification operations on a specific, sensitive macOS volume named `"B1 8TBPii"`. This is a hypothetical name representing volumes that might contain Time Machine backups or other critical system data that should not be tampered with by an external application. Any attempt to interact with this volume via `mdutil` or `mdfind` (if paths are specified) will be aborted with a user-friendly error message.
+
+This rule is enforced by the `spotlight_gui.utils.checks.enforce_volume_protection_rule` function, which is called by all relevant `spotlight_gui.core.commands` functions.
+
+## Future Enhancements (Bundling & CI)
+
+*   **Application Bundling:**
+    *   **py2app (macOS):** Convert the Python application into a standalone macOS `.app` bundle.
+        `pip install py2app`
+        Example `setup.py` for `py2app` would be required.
+    *   **Briefcase:** A cross-platform tool to package Python projects into native installers for macOS, Windows, Linux, Android, iOS, and Web.
+        `pip install briefcase`
+        This would provide a more unified bundling approach.
+*   **Continuous Integration (CI):**
+    *   **GitHub Actions:** Set up a workflow to automatically run linting (`flake8`) and unit tests on pushes and pull requests.
+    *   **macOS Runner:** The CI should include a macOS runner for comprehensive testing of Spotlight-specific functionalities.
+    *   **Cross-platform Testing:** Ensure tests that depend on macOS-specific commands are guarded (e.g., with `if sys.platform == 'darwin':`) so the test suite can also run on Ubuntu CI for general Python code quality checks.
+
+## Contributing
+
+Contributions are welcome! Please follow these steps:
+1.  Fork the repository.
+2.  Create a new branch for your feature (`git checkout -b feature/AmazingFeature`).
+3.  Commit your changes (`git commit -m 'Add some AmazingFeature'`).
+4.  Push to the branch (`git push origin feature/AmazingFeature`).
+5.  Open a Pull Request.
+
+## License
+
+This project is open-source and available under the [MIT License](LICENSE).
