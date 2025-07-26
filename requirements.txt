@@ -1,14 +1,11 @@
-# requirements.txt
-# Core dependency:
-# None explicit, relies on Python built-ins and macOS tools.
+# Optional GUI backend (PySide6 is recommended for the best experience)
+PySide6
 
-# Optional GUI backends:
-# Pick one or both
-# PySide6
-# PyQt5
+# Optional macOS-specific features (recommended on macOS for dark mode detection, etc.)
+pyobjc
 
-# Optional macOS-specific for enhanced features (dark mode, icons)
-# pyobjc
+# --- Development & Testing Dependencies ---
+# These are used for running tests and checking code quality.
 pytest
 pytest-asyncio
 flake8
